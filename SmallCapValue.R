@@ -7,15 +7,14 @@ library(PerformanceAnalytics)
 source("https://raw.githubusercontent.com/KaroRonty/ShillerGoyalDataRetriever/master/ShillerGoyalDataRetriever.r")
 
 # Read data from French
-sv <- read.csv("6_Portfolios_2x3_Wout_Div.CSV",
+sv <- read.csv("6_Portfolios_2x3.CSV",
                skip = 15)
 
-# Keep only date and return column and calculate returns
+# Keep only date and return column and calculate cumulative returns
 sp500_to_join <- full_data %>% 
   select(Date = dates,
-         SP500 = P) %>% 
-  mutate(Date = ymd(paste0(Date, "-01")),
-         SP500 = SP500 / lag(SP500))
+         SP500 = index) %>% 
+  mutate(Date = ymd(paste0(Date, "-01")))
 
 sv_to_wrangle <- sv %>% 
   select(Date = X,
@@ -26,24 +25,20 @@ sv_to_wrangle <- sv %>%
 # Keep only the value weighted daily returns for the French data
 sv_to_join <- sv_to_wrangle %>%
   slice(1:(first(which(is.na(sv_to_wrangle))) - 1)) %>% 
-  mutate(SmallValue = SmallValue / 100 + 1)
+  mutate(SmallValue = cumprod(SmallValue / 100 + 1))
 
 # Join S&P 500 and small cap value returns
 returns <- inner_join(sp500_to_join, sv_to_join) %>% 
   na.omit()
 
 # Calculate returns for the two strategies without reinvested dividends
-last(cumprod(returns$SP500)) ^
+(last(returns[, 2:3]) / first(returns[, 2:3])) ^ 
   (1/(last(year(returns$Date)) -
-        first(year(returns$Date))))
-
-last(cumprod(returns$SmallValue)) ^
-  (1/(last(year(returns$Date)) -
-        first(year(returns$Date))))
+        first(year(returns$Date)))) - 1
 
 # Make xts for calculating drawdowns
-sp500_xts <- xts(returns$SP500 - 1,
-                 order.by = returns$Date)
+sp500_xts <- xts(head(lead(returns$SP500) / returns$SP500 - 1, -1),
+                 order.by = head(returns$Date, -1))
 names(sp500_xts) <- "SP500"
 
 # Get information from drawdowns
@@ -52,26 +47,12 @@ drawdowns <- findDrawdowns(sp500_xts$SP500) %>%
 
 # Put the information to data frame and keep only bear markets
 bearmarkets <- data.frame(return = drawdowns$return,
-                          from = returns$Date[drawdowns$from] - months(2),
-                          trough = returns$Date[drawdowns$trough] - months(2),
-                          to = returns$Date[drawdowns$to] - months(2),
+                          from = returns$Date[drawdowns$from] - months(1),
+                          trough = returns$Date[drawdowns$trough] - months(1),
+                          to = returns$Date[drawdowns$to] - months(1),
                           length = drawdowns$length,
                           peaktotrough = drawdowns$peaktotrough) %>% 
   filter(return < -0.2)
-
-# Nest date sequences for plotting
-date_sequences <- bearmarkets %>% 
-  group_by(return, from, trough, to, length, peaktotrough) %>% 
-  summarise(dates = list(unique(seq.Date(ymd(unique(from)),
-                                         ymd(unique(to)),
-                                         by = "months"))))
-
-# Get all dates of all bear markets
-bear_dates <- data.frame(Date = unique(as.Date(unlist(date_sequences$dates))))
-
-# Add the dates to the data frame
-returns <- returns %>% 
-  left_join(bear_dates)
 
 # Get the beginning dates of all bear markets
 beginning <- bearmarkets %>% 
@@ -114,8 +95,8 @@ to_plot_peak <- returns %>%
   select(Date, SP500, SmallValue, from) %>% 
   na.omit() %>% 
   group_by(from) %>% 
-  mutate(SP500 = cumprod(SP500) - 1,
-         SmallValue = cumprod(SmallValue) - 1)
+  mutate(SP500 = SP500 / SP500[1] - 1,
+         SmallValue = SmallValue / SmallValue[1] - 1)
 
 # Format the peak dates into month names and years
 to_plot_peak <- to_plot_peak %>% 
@@ -165,8 +146,8 @@ to_plot_bottom <- returns %>%
   select(Date, SP500, SmallValue, trough) %>% 
   na.omit() %>% 
   group_by(trough) %>% 
-  mutate(SP500 = cumprod(SP500) - 1,
-         SmallValue = cumprod(SmallValue) - 1)
+  mutate(SP500 = SP500 / SP500[1] - 1,
+         SmallValue = SmallValue / SmallValue[1] - 1)
 
 # Format the bottom dates into month names and years
 to_plot_bottom <- to_plot_bottom %>% 
